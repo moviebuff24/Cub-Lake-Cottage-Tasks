@@ -9,6 +9,9 @@ __v0_jsx-dev-runtime.ts
 # Environment variables
 .env*.local
 
+# Brainstorming session files
+.superpowers/
+
 # Common ignores
 node_modules
 .next/
