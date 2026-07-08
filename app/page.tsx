@@ -33,13 +33,14 @@ import {
   Menu,
   Trash2,
   RefreshCw,
+  Pencil,
 } from 'lucide-react'
 import { type Task, initialTasks, MONTHS_ORDER } from '@/lib/tasks'
 import { LakeReport } from '@/components/lake-report'
 import { VisionBoards } from '@/components/vision-boards'
 
 // Data
-const FIRST_STAY = new Date('2026-08-01')
+const FIRST_STAY = new Date('2026-09-01')
 const TODAY = new Date()
 const DAYS_TO_GO = Math.ceil((FIRST_STAY.getTime() - TODAY.getTime()) / (1000 * 60 * 60 * 24))
 
@@ -75,6 +76,7 @@ export default function CubLakeCottage() {
   const [tasksLoaded, setTasksLoaded] = useState(false)
   const isFirebaseUpdate = useRef(false)
   const [showAddTask, setShowAddTask] = useState(false)
+  const [editingTask, setEditingTask] = useState<{ id: string; title: string; dueDate: string; month: string } | null>(null)
   const [newTask, setNewTask] = useState({ title: '', category: 'personal' as Task['category'], dueDate: '', month: 'June 2026', notes: '' })
   const [openMonths, setOpenMonths] = useState<Record<string, boolean>>({})
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -351,6 +353,15 @@ const [photosLoaded, setPhotosLoaded] = useState(false)
     ))
   }
 
+  const saveTaskEdit = () => {
+    if (!editingTask || !editingTask.title.trim()) return
+    const { id, title, dueDate, month } = editingTask
+    setTasks(prev => prev.map(task =>
+      task.id === id ? { ...task, title: title.trim(), dueDate: dueDate.trim() || 'TBD', month } : task
+    ))
+    setEditingTask(null)
+  }
+
   const addTask = () => {
     if (!newTask.title.trim()) return
     const task: Task = {
@@ -622,7 +633,7 @@ const [photosLoaded, setPhotosLoaded] = useState(false)
                 <div className="text-xs uppercase tracking-wider opacity-70 mt-1">Days to Go</div>
               </div>
               <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 text-center">
-                <div className="font-serif text-3xl md:text-4xl font-medium">Aug 1</div>
+                <div className="font-serif text-3xl md:text-4xl font-medium">Sep 1</div>
                 <div className="text-xs uppercase tracking-wider opacity-70 mt-1">First Stay</div>
               </div>
             </div>
@@ -877,6 +888,7 @@ const [photosLoaded, setPhotosLoaded] = useState(false)
                             groupIndex={groupIndex}
                             onToggle={() => toggleTask(task.id)}
                             onDelete={() => deleteTask(task.id)}
+                            onEdit={() => setEditingTask({ id: task.id, title: task.title, dueDate: task.dueDate, month: task.month })}
                             onUpdateNotes={(notes) => updateTaskNotes(task.id, notes)}
                           />
                         ))}
@@ -1068,6 +1080,76 @@ const [photosLoaded, setPhotosLoaded] = useState(false)
         </div>
       )}
 
+      {/* Edit Task Modal */}
+      {editingTask && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setEditingTask(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-task-title"
+            className="bg-card rounded-2xl p-6 w-full max-w-md shadow-2xl border border-border"
+            onClick={e => e.stopPropagation()}
+            onKeyDown={e => e.key === 'Escape' && setEditingTask(null)}
+          >
+            <h3 id="edit-task-title" className="font-serif text-xl font-medium mb-5">Edit Task</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Task</label>
+                <input
+                  type="text"
+                  value={editingTask.title}
+                  onChange={e => setEditingTask(prev => prev ? { ...prev, title: e.target.value } : prev)}
+                  onKeyDown={e => e.key === 'Enter' && saveTaskEdit()}
+                  autoFocus
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Due Date</label>
+                  <input
+                    type="text"
+                    value={editingTask.dueDate}
+                    onChange={e => setEditingTask(prev => prev ? { ...prev, dueDate: e.target.value } : prev)}
+                    placeholder="e.g. Jul 15"
+                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Month</label>
+                  <select
+                    value={editingTask.month}
+                    onChange={e => setEditingTask(prev => prev ? { ...prev, month: e.target.value } : prev)}
+                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  >
+                    {MONTHS_ORDER.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setEditingTask(null)}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-border text-sm font-medium hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveTaskEdit}
+                disabled={!editingTask.title.trim()}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40 transition-all hover:opacity-90"
+                style={{ backgroundColor: '#3d5a3c' }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Add Photo Slot Modal */}
       {addSlotModal && (
         <div
@@ -1203,20 +1285,20 @@ function getDefaultMonthOpen(month: string, monthTasks: Task[]): boolean {
 
   if (monthDate > firstOfCurrentMonth) return false  // future month
 
-  const isCurrentMonth = monthDate.getTime() === firstOfCurrentMonth.getTime()
   const allComplete = monthTasks.length > 0 && monthTasks.every(t => t.completed)
 
-  if (allComplete && !isCurrentMonth) return false  // past month fully done
+  if (allComplete) return false  // fully completed months start collapsed
 
   return true
 }
 
-function TaskCard({ task, index, groupIndex, onToggle, onDelete, onUpdateNotes }: {
+function TaskCard({ task, index, groupIndex, onToggle, onDelete, onEdit, onUpdateNotes }: {
   task: Task
   index: number
   groupIndex: number
   onToggle: () => void
   onDelete: () => void
+  onEdit: () => void
   onUpdateNotes: (notes: string) => void
 }) {
   const [showNotes, setShowNotes] = useState(false)
@@ -1275,6 +1357,13 @@ function TaskCard({ task, index, groupIndex, onToggle, onDelete, onUpdateNotes }
         <div className="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
           {!pendingDelete ? (
             <>
+              <button
+                onClick={(e) => { e.stopPropagation(); onEdit() }}
+                className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground transition-colors"
+                title="Edit task"
+              >
+                <Pencil className="w-4 h-4" />
+              </button>
               <button
                 onClick={(e) => { e.stopPropagation(); setShowNotes(s => !s) }}
                 className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground transition-colors"

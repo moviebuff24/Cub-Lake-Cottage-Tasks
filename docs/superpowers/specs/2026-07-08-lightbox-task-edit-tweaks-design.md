@@ -9,8 +9,9 @@ Four small changes, batched:
 
 Vision-board photo thumbnails become clickable: hover shows the same darkened
 "View photo" overlay the property tiles use; click opens a fullscreen lightbox
-matching the property-photo one (black backdrop, photo up to 75vh, photo name
-as label, X to close, backdrop/Escape close). Below the photo: a **Delete**
+matching the property-photo one (black backdrop, photo up to 75vh, the board
+label as caption — matching the property lightbox, which shows the tile label
+rather than the raw filename — X to close, backdrop/Escape close). Below the photo: a **Delete**
 button only (no Replace — boards hold photo lists, not slots), reusing the
 existing `handleRemovePhoto` (RTDB remove + Storage cleanup). The small
 hover ✕ on thumbnails keeps working (stopPropagation so it doesn't open the

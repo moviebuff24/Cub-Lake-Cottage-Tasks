@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ref as dbRef, onValue, set, remove, get } from 'firebase/database'
 import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage'
 import { db, storage } from '@/lib/firebase'
-import { Plus, X, Link as LinkIcon, Loader2 } from 'lucide-react'
+import { Plus, X, Link as LinkIcon, Loader2, Trash2 } from 'lucide-react'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -64,6 +64,7 @@ function BoardTile({ board, onDelete }: { board: VisionBoard; onDelete: (id: str
   const labelInputRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [lightboxPhoto, setLightboxPhoto] = useState<VisionPhoto | null>(null)
 
   // Keep local label in sync if Firebase pushes an update
   useEffect(() => { setLabel(board.label) }, [board.label])
@@ -213,9 +214,17 @@ function BoardTile({ board, onDelete }: { board: VisionBoard; onDelete: (id: str
       <div className="p-3 grid grid-cols-3 gap-1.5">
         {board.photos.map(photo => (
           <div key={photo.id} className="relative group aspect-[4/3] rounded-lg overflow-hidden bg-secondary">
-            <img src={photo.url} alt={photo.name} className="w-full h-full object-cover" />
             <button
-              onClick={() => handleRemovePhoto(photo)}
+              onClick={() => setLightboxPhoto(photo)}
+              className="absolute inset-0 w-full h-full"
+            >
+              <img src={photo.url} alt={photo.name} className="absolute inset-0 w-full h-full object-cover" />
+              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                <span className="text-white text-xs font-medium">View photo</span>
+              </div>
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); handleRemovePhoto(photo) }}
               className="absolute top-1 right-1 p-0.5 rounded-full bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/70"
             >
               <X className="w-3 h-3" />
@@ -310,6 +319,47 @@ function BoardTile({ board, onDelete }: { board: VisionBoard; onDelete: (id: str
           className="w-full bg-transparent border-none outline-none text-sm text-muted-foreground italic resize-none placeholder:text-muted-foreground/50 leading-relaxed"
         />
       </div>
+
+      {/* Photo lightbox — same pattern as the property-photo lightbox in page.tsx */}
+      {lightboxPhoto && (
+        <div
+          className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4"
+          onClick={() => setLightboxPhoto(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={lightboxPhoto.name}
+            className="relative max-w-4xl max-h-full w-full flex flex-col items-center"
+            onClick={e => e.stopPropagation()}
+            onKeyDown={e => e.key === 'Escape' && setLightboxPhoto(null)}
+          >
+            <button
+              onClick={() => setLightboxPhoto(null)}
+              className="absolute -top-12 right-0 p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <img
+              src={lightboxPhoto.url}
+              alt={lightboxPhoto.name}
+              className="max-w-full max-h-[75vh] rounded-xl object-contain shadow-2xl"
+            />
+            <div className="flex items-center gap-3 mt-5">
+              <span className="text-white/80 text-sm font-medium mr-2">{board.label}</span>
+              <button
+                onClick={() => {
+                  handleRemovePhoto(lightboxPhoto)
+                  setLightboxPhoto(null)
+                }}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-white bg-destructive/80 hover:bg-destructive transition-colors"
+              >
+                <Trash2 className="w-4 h-4" /> Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete confirmation overlay */}
       {showDeleteConfirm && (
