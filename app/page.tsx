@@ -11,7 +11,6 @@ import {
   Home,
   Waves,
   TreePine,
-  Flame,
   Sparkles,
   CheckCircle2,
   Circle,
@@ -61,13 +60,6 @@ const photoCategories = [
   { id: 'kitchen', label: 'Kitchen', icon: UtensilsCrossed, hasImage: false },
 ]
 
-const inspirationBoard = [
-  { id: 'hottub', label: 'Hot Tub Dreams', icon: Sparkles, color: 'sunset' },
-  { id: 'decor', label: 'Cabin Decor', icon: Home, color: 'pine' },
-  { id: 'firepit', label: 'Fire Pit', icon: Flame, color: 'sunset' },
-  { id: 'dock', label: 'Dock Vibes', icon: Ship, color: 'lake' },
-]
-
 interface PhotoUpload {
   id: string
   url: string
@@ -98,29 +90,22 @@ export default function CubLakeCottage() {
 
   // Photo states — synced via Firebase RTDB (metadata) + Firebase Storage (files)
   const [propertyPhotos, setPropertyPhotos] = useState<Record<string, PhotoUpload | null>>({ front: null, lake: null, dock: null, living: null, kitchen: null })
-  const [inspirationPhotos, setInspirationPhotos] = useState<Record<string, PhotoUpload | null>>({ hottub: null, decor: null, firepit: null, dock: null })
 const [photosLoaded, setPhotosLoaded] = useState(false)
   const isFirebasePhotoUpdate = useRef(false)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [customPropertySlots, setCustomPropertySlots] = useState<Array<{ id: string; label: string }>>([])
-  const [customInspirationSlots, setCustomInspirationSlots] = useState<Array<{ id: string; label: string }>>([])
   const [propertyOrder, setPropertyOrder] = useState<string[]>(['front', 'lake', 'dock', 'living', 'kitchen'])
-  const [inspirationOrder, setInspirationOrder] = useState<string[]>(['hottub', 'decor', 'firepit', 'dock'])
-  const [addSlotModal, setAddSlotModal] = useState<{ type: 'property' | 'inspiration' } | null>(null)
+  const [addSlotModal, setAddSlotModal] = useState(false)
   const [newSlotLabel, setNewSlotLabel] = useState('')
-  const [inspirationCaptions, setInspirationCaptions] = useState<Record<string, string>>({})
-  const captionWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  
+
   // Debounce refs for drag-and-drop Firebase writes
   const propertyOrderWriteRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const inspirationOrderWriteRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // File input refs
   const propertyInputRef = useRef<HTMLInputElement>(null)
-  const inspirationInputRef = useRef<HTMLInputElement>(null)
-  const [activeUploadTarget, setActiveUploadTarget] = useState<{ type: 'property' | 'inspiration'; id?: string } | null>(null)
-  const [lightboxPhoto, setLightboxPhoto] = useState<{ type: 'property' | 'inspiration'; id: string; label: string; isCustom: boolean } | null>(null)
+  const [activeUploadTarget, setActiveUploadTarget] = useState<string | null>(null)
+  const [lightboxPhoto, setLightboxPhoto] = useState<{ id: string; label: string; isCustom: boolean } | null>(null)
 
   // Computed values
   const completedCount = tasks.filter(t => t.completed).length
@@ -272,7 +257,8 @@ const [photosLoaded, setPhotosLoaded] = useState(false)
     openMonthsInitialized.current = true
   }, [tasks, tasksLoaded])
 
-  // Subscribe to Firebase photos metadata
+  // Subscribe to Firebase photos metadata — inspiration* keys under photos/
+  // are retired mood-board tile data and are intentionally ignored
   useEffect(() => {
     const photosRef = dbRef(db, 'photos')
     const unsubscribe = onValue(photosRef, (snapshot) => {
@@ -280,35 +266,27 @@ const [photosLoaded, setPhotosLoaded] = useState(false)
       isFirebasePhotoUpdate.current = true
       if (data) {
         setPropertyPhotos(data.propertyPhotos || { front: null, lake: null, dock: null, living: null, kitchen: null })
-        setInspirationPhotos(data.inspirationPhotos || { hottub: null, decor: null, firepit: null, dock: null })
-setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPropertySlots) as Array<{ id: string; label: string }> : [])
-        setCustomInspirationSlots(data.customInspirationSlots ? Object.values(data.customInspirationSlots) as Array<{ id: string; label: string }> : [])
+        setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPropertySlots) as Array<{ id: string; label: string }> : [])
         if (data.propertyOrder?.length) setPropertyOrder(data.propertyOrder)
-        if (data.inspirationOrder?.length) setInspirationOrder(data.inspirationOrder)
       }
       setPhotosLoaded(true)
     })
     return () => unsubscribe()
   }, [])
 
-  // Subscribe to inspiration tile captions — separate path so main photo writes don't clobber them
-  useEffect(() => {
-    const captionsRef = dbRef(db, 'inspirationCaptions')
-    const unsubscribe = onValue(captionsRef, (snapshot) => {
-      setInspirationCaptions(snapshot.val() || {})
-    })
-    return () => unsubscribe()
-  }, [])
-
-  // Write photo metadata to Firebase only when changed locally
+  // Write photo metadata to Firebase only when changed locally.
+  // Targets subpaths (never the whole photos node) so the retired mood-board
+  // tile data under photos/inspiration* stays intact in the database.
   useEffect(() => {
     if (!photosLoaded) return
     if (isFirebasePhotoUpdate.current) {
       isFirebasePhotoUpdate.current = false
       return
     }
-    set(dbRef(db, 'photos'), { propertyPhotos, inspirationPhotos, customPropertySlots, customInspirationSlots, propertyOrder, inspirationOrder }).catch(err => console.error('Failed to sync photos:', err))
-  }, [propertyPhotos, inspirationPhotos, customPropertySlots, customInspirationSlots, propertyOrder, inspirationOrder, photosLoaded])
+    set(dbRef(db, 'photos/propertyPhotos'), propertyPhotos).catch(err => console.error('Failed to sync photos:', err))
+    set(dbRef(db, 'photos/customPropertySlots'), customPropertySlots).catch(err => console.error('Failed to sync photos:', err))
+    set(dbRef(db, 'photos/propertyOrder'), propertyOrder).catch(err => console.error('Failed to sync photos:', err))
+  }, [propertyPhotos, customPropertySlots, propertyOrder, photosLoaded])
 
   // Subscribe to shared scratchpad
   useEffect(() => {
@@ -373,17 +351,6 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
     ))
   }
 
-  const updateInspirationCaption = (id: string, caption: string) => {
-    setInspirationCaptions(prev => {
-      const next = { ...prev, [id]: caption }
-      if (captionWriteTimerRef.current) clearTimeout(captionWriteTimerRef.current)
-      captionWriteTimerRef.current = setTimeout(() => {
-        set(dbRef(db, 'inspirationCaptions'), next).catch(err => console.error('Failed to sync captions:', err))
-      }, 800)
-      return next
-    })
-  }
-
   const addTask = () => {
     if (!newTask.title.trim()) return
     const task: Task = {
@@ -413,7 +380,7 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
       return
     }
 
-    const target = activeUploadTarget
+    const targetId = activeUploadTarget
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
     const storagePath = `photos/${Date.now()}-${safeName}`
     const fileRef = storageRef(storage, storagePath)
@@ -424,11 +391,7 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
       const url = await getDownloadURL(snapshot.ref)
       const upload: PhotoUpload = { id: Date.now().toString(), url, name: file.name, storagePath }
 
-      if (target.type === 'property' && target.id) {
-        setPropertyPhotos(prev => ({ ...prev, [target.id!]: upload }))
-      } else if (target.type === 'inspiration' && target.id) {
-        setInspirationPhotos(prev => ({ ...prev, [target.id!]: upload }))
-      }
+      setPropertyPhotos(prev => ({ ...prev, [targetId]: upload }))
     } catch (err) {
       console.error('Photo upload failed:', err)
       setUploadError('Upload failed — please try again')
@@ -440,22 +403,14 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
     e.target.value = ''
   }
 
-  const triggerUpload = (type: 'property' | 'inspiration', id?: string) => {
-    setActiveUploadTarget({ type, id })
-    if (type === 'property') propertyInputRef.current?.click()
-    else if (type === 'inspiration') inspirationInputRef.current?.click()
+  const triggerUpload = (id: string) => {
+    setActiveUploadTarget(id)
+    propertyInputRef.current?.click()
   }
 
-  const removePhoto = (type: 'property' | 'inspiration', id: string) => {
-    let photo: PhotoUpload | null | undefined
-
-    if (type === 'property') {
-      photo = propertyPhotos[id]
-      setPropertyPhotos(prev => ({ ...prev, [id]: null }))
-    } else if (type === 'inspiration') {
-      photo = inspirationPhotos[id]
-      setInspirationPhotos(prev => ({ ...prev, [id]: null }))
-    }
+  const removePhoto = (id: string) => {
+    const photo = propertyPhotos[id]
+    setPropertyPhotos(prev => ({ ...prev, [id]: null }))
 
     if (photo?.storagePath) {
       deleteObject(storageRef(storage, photo.storagePath)).catch(err =>
@@ -464,29 +419,19 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
     }
   }
 
-  const removeCustomSlot = (type: 'property' | 'inspiration', id: string) => {
-    removePhoto(type, id)
-    if (type === 'property') {
-      setCustomPropertySlots(prev => prev.filter(s => s.id !== id))
-      setPropertyOrder(prev => prev.filter(oid => oid !== id))
-    } else {
-      setCustomInspirationSlots(prev => prev.filter(s => s.id !== id))
-      setInspirationOrder(prev => prev.filter(oid => oid !== id))
-    }
+  const removeCustomSlot = (id: string) => {
+    removePhoto(id)
+    setCustomPropertySlots(prev => prev.filter(s => s.id !== id))
+    setPropertyOrder(prev => prev.filter(oid => oid !== id))
   }
 
   const confirmAddSlot = () => {
     if (!newSlotLabel.trim() || !addSlotModal) return
     const id = `custom-${Date.now()}`
-    if (addSlotModal.type === 'property') {
-      setCustomPropertySlots(prev => [...prev, { id, label: newSlotLabel.trim() }])
-      setPropertyOrder(prev => [...prev, id])
-    } else {
-      setCustomInspirationSlots(prev => [...prev, { id, label: newSlotLabel.trim() }])
-      setInspirationOrder(prev => [...prev, id])
-    }
+    setCustomPropertySlots(prev => [...prev, { id, label: newSlotLabel.trim() }])
+    setPropertyOrder(prev => [...prev, id])
     setNewSlotLabel('')
-    setAddSlotModal(null)
+    setAddSlotModal(false)
   }
 
   // Drag-and-drop sensors — require 8px movement before drag activates so clicks still work
@@ -512,42 +457,15 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
     }, 400)
   }
 
-  const handleInspirationDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event
-    if (!over || active.id === over.id) return
-    const knownIds = new Set(inspirationOrder)
-    const allIds = [
-      ...inspirationOrder,
-      ...inspirationBoard.map(c => c.id).filter(id => !knownIds.has(id)),
-      ...customInspirationSlots.map(s => s.id).filter(id => !knownIds.has(id)),
-    ]
-    const from = allIds.indexOf(String(active.id))
-    const to = allIds.indexOf(String(over.id))
-    if (from === -1 || to === -1) return
-    const newOrder = arrayMove(allIds, from, to)
-    setInspirationOrder(newOrder)
-    if (inspirationOrderWriteRef.current) clearTimeout(inspirationOrderWriteRef.current)
-    inspirationOrderWriteRef.current = setTimeout(() => {
-      set(dbRef(db, 'photos/inspirationOrder'), newOrder)
-    }, 400)
-  }
-
   // Ordered tile arrays for rendering
   const allPropertyTiles = [
     ...photoCategories.map(c => ({ ...c, isCustom: false as const })),
     ...customPropertySlots.map(s => ({ id: s.id, label: s.label, icon: ImageIcon, hasImage: false, isCustom: true as const })),
   ]
-  const allInspirationTiles = [
-    ...inspirationBoard.map(c => ({ ...c, isCustom: false as const })),
-    ...customInspirationSlots.map(s => ({ id: s.id, label: s.label, icon: ImageIcon, color: 'lake', isCustom: true as const })),
-  ]
   // Ensure any tile whose ID isn't in the saved order yet still shows up
   const knownPropertyIds = new Set(propertyOrder)
-  const knownInspirationIds = new Set(inspirationOrder)
   const fullPropertyOrder = [...propertyOrder, ...allPropertyTiles.map(t => t.id).filter(id => !knownPropertyIds.has(id))]
-  const fullInspirationOrder = [...inspirationOrder, ...allInspirationTiles.map(t => t.id).filter(id => !knownInspirationIds.has(id))]
   const orderedPropertyTiles = fullPropertyOrder.map(id => allPropertyTiles.find(t => t.id === id)).filter((t): t is NonNullable<typeof t> => t != null)
-  const orderedInspirationTiles = fullInspirationOrder.map(id => allInspirationTiles.find(t => t.id === id)).filter((t): t is NonNullable<typeof t> => t != null)
 
   const groupedTasks = tasks.reduce((acc, task) => {
     if (!acc[task.month]) acc[task.month] = []
@@ -559,7 +477,6 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
     <main className="min-h-screen">
       {/* Hidden file inputs */}
       <input type="file" ref={propertyInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
-      <input type="file" ref={inspirationInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
       {/* Mobile navigation menu */}
       {mobileMenuOpen && (
         <div className="fixed inset-0 z-50 md:hidden">
@@ -591,7 +508,7 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
                 { label: 'Progress', id: 'progress' },
                 { label: 'Lake Report', id: 'weather' },
                 { label: 'Notes', id: 'notes' },
-                { label: 'Vision', id: 'vision' },
+                { label: 'Mood Board', id: 'vision' },
               ].map(({ label, id }) => (
                 <button
                   key={id}
@@ -669,7 +586,7 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
               <button onClick={() => scrollToSection('progress')} className="opacity-70 hover:opacity-100 transition-all hover:tracking-wide">Progress</button>
               <button onClick={() => scrollToSection('weather')} className="opacity-70 hover:opacity-100 transition-all hover:tracking-wide">Lake Report</button>
               <button onClick={() => scrollToSection('notes')} className="opacity-70 hover:opacity-100 transition-all hover:tracking-wide">Notes</button>
-              <button onClick={() => scrollToSection('vision')} className="opacity-70 hover:opacity-100 transition-all hover:tracking-wide">Vision</button>
+              <button onClick={() => scrollToSection('vision')} className="opacity-70 hover:opacity-100 transition-all hover:tracking-wide">Mood Board</button>
             </nav>
           </div>
 
@@ -795,7 +712,7 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
                     return (
                       <SortablePhotoTile key={cat.id} id={cat.id}>
                         <button
-                          onClick={() => photo ? setLightboxPhoto({ type: 'property', id: cat.id, label: cat.label, isCustom }) : triggerUpload('property', cat.id)}
+                          onClick={() => photo ? setLightboxPhoto({ id: cat.id, label: cat.label, isCustom }) : triggerUpload(cat.id)}
                           className="group relative aspect-square w-full rounded-2xl bg-card border border-border overflow-hidden hover:border-primary/50 transition-all hover:shadow-xl hover:-translate-y-1"
                           onMouseEnter={() => setHoveredCategory(cat.id)}
                           onMouseLeave={() => setHoveredCategory(null)}
@@ -807,7 +724,7 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
                                 <span className="text-white text-sm font-medium">View photo</span>
                               </div>
                               <button
-                                onClick={(e) => { e.stopPropagation(); isCustom ? removeCustomSlot('property', cat.id) : removePhoto('property', cat.id) }}
+                                onClick={(e) => { e.stopPropagation(); isCustom ? removeCustomSlot(cat.id) : removePhoto(cat.id) }}
                                 onPointerDown={e => e.stopPropagation()}
                                 className="absolute top-2 right-2 p-1.5 rounded-full bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/70"
                               >
@@ -827,7 +744,7 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
                               </div>
                               {isCustom && (
                                 <button
-                                  onClick={(e) => { e.stopPropagation(); removeCustomSlot('property', cat.id) }}
+                                  onClick={(e) => { e.stopPropagation(); removeCustomSlot(cat.id) }}
                                   onPointerDown={e => e.stopPropagation()}
                                   className="absolute top-2 right-2 p-1.5 rounded-full bg-border text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive z-10"
                                 >
@@ -853,7 +770,7 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
                     )
                   })}
                   <button
-                    onClick={() => { setAddSlotModal({ type: 'property' }); setNewSlotLabel('') }}
+                    onClick={() => { setAddSlotModal(true); setNewSlotLabel('') }}
                     className="group aspect-square rounded-2xl border-2 border-dashed border-border hover:border-primary/50 flex flex-col items-center justify-center gap-3 transition-all hover:shadow-lg hover:-translate-y-1 hover:bg-secondary/50"
                   >
                     <div className="p-4 rounded-2xl bg-secondary group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
@@ -866,8 +783,8 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
             </DndContext>
           </div>
 
-          {/* Inspiration board — Mood Board */}
-          <div>
+          {/* Mood Board — vision boards: photos, links, and notes per idea */}
+          <div id="vision">
             <div className="mb-6">
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest flex items-center gap-3">
                 <span className="w-8 h-px bg-border" />
@@ -876,96 +793,10 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
                 <span className="flex-1 h-px bg-border" />
               </h3>
               <p className="text-sm text-muted-foreground text-center mt-2">
-                Click any tile to pin an inspiration photo — add notes below each one
+                Collect ideas in boards — pin photos, links, and notes for each project
               </p>
             </div>
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleInspirationDragEnd}>
-              <SortableContext items={fullInspirationOrder} strategy={rectSortingStrategy}>
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                  {orderedInspirationTiles.map((item) => {
-                    const colorStyles = {
-                      sunset: { bg: 'rgba(212, 165, 116, 0.12)', border: 'rgba(212, 165, 116, 0.3)', text: '#d4a574', hover: 'rgba(212, 165, 116, 0.2)' },
-                      lake: { bg: 'rgba(70, 130, 180, 0.12)', border: 'rgba(70, 130, 180, 0.3)', text: '#4682b4', hover: 'rgba(70, 130, 180, 0.2)' },
-                      pine: { bg: 'rgba(61, 90, 60, 0.12)', border: 'rgba(61, 90, 60, 0.3)', text: '#3d5a3c', hover: 'rgba(61, 90, 60, 0.2)' },
-                    }
-                    const colors = colorStyles[item.color as keyof typeof colorStyles] ?? colorStyles.lake
-                    const photo = inspirationPhotos[item.id]
-                    const isCustom = item.isCustom
-                    return (
-                      <SortablePhotoTile key={item.id} id={item.id}>
-                        <div>
-                          <button
-                            onClick={() => photo ? setLightboxPhoto({ type: 'inspiration', id: item.id, label: item.label, isCustom }) : triggerUpload('inspiration', item.id)}
-                            className="group relative aspect-[4/3] w-full rounded-2xl overflow-hidden border-2 transition-all hover:shadow-xl hover:-translate-y-1"
-                            style={{ backgroundColor: photo ? undefined : colors.bg, borderColor: colors.border }}
-                          >
-                            {photo ? (
-                              <>
-                                <img src={photo.url} alt={item.label} className="absolute inset-0 w-full h-full object-cover" />
-                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                  <span className="text-white text-sm font-medium">View photo</span>
-                                </div>
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); isCustom ? removeCustomSlot('inspiration', item.id) : removePhoto('inspiration', item.id) }}
-                                  onPointerDown={e => e.stopPropagation()}
-                                  className="absolute top-2 right-2 p-1.5 rounded-full bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/70"
-                                >
-                                  <X className="w-4 h-4" />
-                                </button>
-                                <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/60 to-transparent">
-                                  <span className="text-white text-xs font-medium">{item.label}</span>
-                                </div>
-                              </>
-                            ) : (
-                              <>
-                                <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <div className="absolute inset-0 animate-shimmer" style={{ background: `linear-gradient(90deg, transparent 0%, ${colors.hover} 50%, transparent 100%)`, backgroundSize: '200% 100%' }} />
-                                </div>
-                                {isCustom && (
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); removeCustomSlot('inspiration', item.id) }}
-                                    onPointerDown={e => e.stopPropagation()}
-                                    className="absolute top-2 right-2 p-1.5 rounded-full bg-border text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive z-10"
-                                  >
-                                    <X className="w-3 h-3" />
-                                  </button>
-                                )}
-                                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4">
-                                  <div className="p-3 rounded-2xl transition-all duration-300 group-hover:scale-110 group-hover:shadow-lg" style={{ backgroundColor: colors.bg, color: colors.text }}>
-                                    <item.icon className="w-5 h-5" />
-                                  </div>
-                                  <span className="text-xs font-semibold text-center leading-tight">{item.label}</span>
-                                  <span className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">Tap to pin a photo</span>
-                                </div>
-                              </>
-                            )}
-                          </button>
-                          {photo && (
-                            <input
-                              type="text"
-                              value={inspirationCaptions[item.id] || ''}
-                              onChange={e => updateInspirationCaption(item.id, e.target.value)}
-                              onPointerDown={e => e.stopPropagation()}
-                              placeholder="Add a note…"
-                              className="w-full mt-1.5 px-2 py-1 text-xs bg-transparent rounded-lg border border-transparent hover:border-border focus:border-border focus:outline-none focus:ring-1 focus:ring-primary/30 text-foreground placeholder:text-muted-foreground/60 transition-colors"
-                            />
-                          )}
-                        </div>
-                      </SortablePhotoTile>
-                    )
-                  })}
-                  <button
-                    onClick={() => { setAddSlotModal({ type: 'inspiration' }); setNewSlotLabel('') }}
-                    className="group aspect-[4/3] rounded-2xl border-2 border-dashed border-border hover:border-primary/50 flex flex-col items-center justify-center gap-3 transition-all hover:shadow-lg hover:-translate-y-1 hover:bg-secondary/50"
-                  >
-                    <div className="p-4 rounded-2xl bg-secondary group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
-                      <Plus className="w-6 h-6" />
-                    </div>
-                    <span className="text-sm font-medium text-muted-foreground group-hover:text-foreground transition-colors">Add Category</span>
-                  </button>
-                </div>
-              </SortableContext>
-            </DndContext>
+            <VisionBoards />
           </div>
         </div>
       </section>
@@ -1109,30 +940,6 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
         </div>
       </section>
 
-      {/* Vision Section */}
-      <section id="vision" className="px-6 py-20 md:px-12 lg:px-20 relative overflow-hidden">
-        <div className="absolute top-0 right-0 w-1/2 h-full opacity-50 pointer-events-none">
-          <div className="absolute top-20 right-20 w-64 h-64 rounded-full blur-3xl" style={{ backgroundColor: 'rgba(70, 130, 180, 0.15)' }} />
-          <div className="absolute bottom-40 right-40 w-48 h-48 rounded-full blur-3xl" style={{ backgroundColor: 'rgba(212, 165, 116, 0.15)' }} />
-        </div>
-        <div className="max-w-6xl mx-auto relative">
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-secondary text-sm font-medium mb-6">
-            <Sparkles className="w-4 h-4" style={{ color: '#d4a574' }} />
-            <span>The Vision</span>
-          </div>
-          <h2 className="font-serif text-4xl md:text-5xl font-medium mb-4 text-balance leading-tight">
-            This is just the <span className="italic">beginning</span>
-          </h2>
-          <p className="text-muted-foreground text-lg leading-relaxed mb-10">
-            Every great adventure starts with a single step. Our cottage on Cub Lake
-            represents more than just a property — it&apos;s where memories will be made,
-            where mornings start with lake views, and where life slows down just enough
-            to really be enjoyed.
-          </p>
-          <VisionBoards />
-        </div>
-      </section>
-
       {/* Footer */}
       <footer className="px-6 py-16 md:px-12 lg:px-20 border-t border-border relative overflow-hidden">
         <div className="absolute inset-0 opacity-50">
@@ -1261,11 +1068,11 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
         </div>
       )}
 
-      {/* Add Photo/Inspo Slot Modal */}
+      {/* Add Photo Slot Modal */}
       {addSlotModal && (
         <div
           className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-          onClick={() => setAddSlotModal(null)}
+          onClick={() => setAddSlotModal(false)}
         >
           <div
             role="dialog"
@@ -1273,28 +1080,26 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
             aria-labelledby="add-slot-title"
             className="bg-card rounded-2xl p-6 w-full max-w-sm shadow-2xl border border-border"
             onClick={e => e.stopPropagation()}
-            onKeyDown={e => e.key === 'Escape' && setAddSlotModal(null)}
+            onKeyDown={e => e.key === 'Escape' && setAddSlotModal(false)}
           >
             <h3 id="add-slot-title" className="font-serif text-xl font-medium mb-2">
-              {addSlotModal.type === 'property' ? 'Add a photo spot' : 'Add inspiration'}
+              Add a photo spot
             </h3>
             <p className="text-sm text-muted-foreground mb-5">
-              {addSlotModal.type === 'property'
-                ? 'Name the room or area — you can upload a photo after.'
-                : 'Name this inspiration category — you can upload a photo after.'}
+              Name the room or area — you can upload a photo after.
             </p>
             <input
               type="text"
               value={newSlotLabel}
               onChange={e => setNewSlotLabel(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && confirmAddSlot()}
-              placeholder={addSlotModal.type === 'property' ? 'e.g. Back Deck, Garage, Basement…' : 'e.g. Kayak Storage, Landscaping…'}
+              placeholder="e.g. Back Deck, Garage, Basement…"
               autoFocus
               className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 mb-5"
             />
             <div className="flex gap-3">
               <button
-                onClick={() => setAddSlotModal(null)}
+                onClick={() => setAddSlotModal(false)}
                 className="flex-1 px-4 py-2.5 rounded-xl border border-border text-sm font-medium hover:bg-secondary transition-colors"
               >
                 Cancel
@@ -1333,7 +1138,7 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
               <X className="w-5 h-5" />
             </button>
             <img
-              src={(lightboxPhoto.type === 'property' ? propertyPhotos : inspirationPhotos)[lightboxPhoto.id]?.url}
+              src={propertyPhotos[lightboxPhoto.id]?.url}
               alt={lightboxPhoto.label}
               className="max-w-full max-h-[75vh] rounded-xl object-contain shadow-2xl"
             />
@@ -1341,9 +1146,9 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
               <span className="text-white/80 text-sm font-medium mr-2">{lightboxPhoto.label}</span>
               <button
                 onClick={() => {
-                  const { type, id } = lightboxPhoto
+                  const { id } = lightboxPhoto
                   setLightboxPhoto(null)
-                  triggerUpload(type, id)
+                  triggerUpload(id)
                 }}
                 className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-white bg-white/10 hover:bg-white/20 transition-colors"
               >
@@ -1351,8 +1156,8 @@ setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPrope
               </button>
               <button
                 onClick={() => {
-                  const { type, id, isCustom } = lightboxPhoto
-                  isCustom ? removeCustomSlot(type, id) : removePhoto(type, id)
+                  const { id, isCustom } = lightboxPhoto
+                  isCustom ? removeCustomSlot(id) : removePhoto(id)
                   setLightboxPhoto(null)
                 }}
                 className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-white bg-destructive/80 hover:bg-destructive transition-colors"
