@@ -11,7 +11,6 @@ import {
   Home,
   Waves,
   TreePine,
-  Flame,
   Sparkles,
   CheckCircle2,
   Circle,
@@ -32,11 +31,16 @@ import {
   MessageSquare,
   GripVertical,
   Menu,
+  Trash2,
+  RefreshCw,
+  Pencil,
 } from 'lucide-react'
 import { type Task, initialTasks, MONTHS_ORDER } from '@/lib/tasks'
+import { LakeReport } from '@/components/lake-report'
+import { VisionBoards } from '@/components/vision-boards'
 
 // Data
-const FIRST_STAY = new Date('2026-08-01')
+const FIRST_STAY = new Date('2026-09-01')
 const TODAY = new Date()
 const DAYS_TO_GO = Math.ceil((FIRST_STAY.getTime() - TODAY.getTime()) / (1000 * 60 * 60 * 24))
 
@@ -57,13 +61,6 @@ const photoCategories = [
   { id: 'kitchen', label: 'Kitchen', icon: UtensilsCrossed, hasImage: false },
 ]
 
-const inspirationBoard = [
-  { id: 'hottub', label: 'Hot Tub Dreams', icon: Sparkles, color: 'sunset' },
-  { id: 'decor', label: 'Cabin Decor', icon: Home, color: 'pine' },
-  { id: 'firepit', label: 'Fire Pit', icon: Flame, color: 'sunset' },
-  { id: 'dock', label: 'Dock Vibes', icon: Ship, color: 'lake' },
-]
-
 interface PhotoUpload {
   id: string
   url: string
@@ -79,6 +76,7 @@ export default function CubLakeCottage() {
   const [tasksLoaded, setTasksLoaded] = useState(false)
   const isFirebaseUpdate = useRef(false)
   const [showAddTask, setShowAddTask] = useState(false)
+  const [editingTask, setEditingTask] = useState<{ id: string; title: string; dueDate: string; month: string } | null>(null)
   const [newTask, setNewTask] = useState({ title: '', category: 'personal' as Task['category'], dueDate: '', month: 'June 2026', notes: '' })
   const [openMonths, setOpenMonths] = useState<Record<string, boolean>>({})
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
@@ -94,35 +92,27 @@ export default function CubLakeCottage() {
 
   // Photo states — synced via Firebase RTDB (metadata) + Firebase Storage (files)
   const [propertyPhotos, setPropertyPhotos] = useState<Record<string, PhotoUpload | null>>({ front: null, lake: null, dock: null, living: null, kitchen: null })
-  const [inspirationPhotos, setInspirationPhotos] = useState<Record<string, PhotoUpload | null>>({ hottub: null, decor: null, firepit: null, dock: null })
-  const [visionPhotos, setVisionPhotos] = useState<PhotoUpload[]>([])
-  const [photosLoaded, setPhotosLoaded] = useState(false)
+const [photosLoaded, setPhotosLoaded] = useState(false)
   const isFirebasePhotoUpdate = useRef(false)
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [customPropertySlots, setCustomPropertySlots] = useState<Array<{ id: string; label: string }>>([])
-  const [customInspirationSlots, setCustomInspirationSlots] = useState<Array<{ id: string; label: string }>>([])
   const [propertyOrder, setPropertyOrder] = useState<string[]>(['front', 'lake', 'dock', 'living', 'kitchen'])
-  const [inspirationOrder, setInspirationOrder] = useState<string[]>(['hottub', 'decor', 'firepit', 'dock'])
-  const [addSlotModal, setAddSlotModal] = useState<{ type: 'property' | 'inspiration' } | null>(null)
+  const [addSlotModal, setAddSlotModal] = useState(false)
   const [newSlotLabel, setNewSlotLabel] = useState('')
-  const [inspirationCaptions, setInspirationCaptions] = useState<Record<string, string>>({})
-  const captionWriteTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  
+
   // Debounce refs for drag-and-drop Firebase writes
   const propertyOrderWriteRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const inspirationOrderWriteRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // File input refs
   const propertyInputRef = useRef<HTMLInputElement>(null)
-  const inspirationInputRef = useRef<HTMLInputElement>(null)
-  const visionInputRef = useRef<HTMLInputElement>(null)
-  const [activeUploadTarget, setActiveUploadTarget] = useState<{ type: 'property' | 'inspiration' | 'vision'; id?: string } | null>(null)
+  const [activeUploadTarget, setActiveUploadTarget] = useState<string | null>(null)
+  const [lightboxPhoto, setLightboxPhoto] = useState<{ id: string; label: string; isCustom: boolean } | null>(null)
 
   // Computed values
   const completedCount = tasks.filter(t => t.completed).length
   const totalCount = tasks.length
-  const progressPercent = Math.round((completedCount / totalCount) * 100)
+  const progressPercent = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0
 
   useEffect(() => {
     setMounted(true)
@@ -244,7 +234,13 @@ export default function CubLakeCottage() {
       isFirebaseUpdate.current = false
       return
     }
-    set(dbRef(db, 'tasks'), tasks)
+    // Firebase set() throws synchronously (not a rejected promise) if any nested
+    // value is undefined — JSON round-trip strips those keys before writing.
+    try {
+      set(dbRef(db, 'tasks'), JSON.parse(JSON.stringify(tasks))).catch(err => console.error('Failed to sync tasks:', err))
+    } catch (err) {
+      console.error('Failed to sync tasks:', err)
+    }
   }, [tasks, tasksLoaded])
 
   // Initialize open/closed state for month groups once tasks load
@@ -263,7 +259,8 @@ export default function CubLakeCottage() {
     openMonthsInitialized.current = true
   }, [tasks, tasksLoaded])
 
-  // Subscribe to Firebase photos metadata
+  // Subscribe to Firebase photos metadata — inspiration* keys under photos/
+  // are retired mood-board tile data and are intentionally ignored
   useEffect(() => {
     const photosRef = dbRef(db, 'photos')
     const unsubscribe = onValue(photosRef, (snapshot) => {
@@ -271,36 +268,27 @@ export default function CubLakeCottage() {
       isFirebasePhotoUpdate.current = true
       if (data) {
         setPropertyPhotos(data.propertyPhotos || { front: null, lake: null, dock: null, living: null, kitchen: null })
-        setInspirationPhotos(data.inspirationPhotos || { hottub: null, decor: null, firepit: null, dock: null })
-        setVisionPhotos(data.visionPhotos ? Object.values(data.visionPhotos) as PhotoUpload[] : [])
         setCustomPropertySlots(data.customPropertySlots ? Object.values(data.customPropertySlots) as Array<{ id: string; label: string }> : [])
-        setCustomInspirationSlots(data.customInspirationSlots ? Object.values(data.customInspirationSlots) as Array<{ id: string; label: string }> : [])
         if (data.propertyOrder?.length) setPropertyOrder(data.propertyOrder)
-        if (data.inspirationOrder?.length) setInspirationOrder(data.inspirationOrder)
       }
       setPhotosLoaded(true)
     })
     return () => unsubscribe()
   }, [])
 
-  // Subscribe to inspiration tile captions — separate path so main photo writes don't clobber them
-  useEffect(() => {
-    const captionsRef = dbRef(db, 'inspirationCaptions')
-    const unsubscribe = onValue(captionsRef, (snapshot) => {
-      setInspirationCaptions(snapshot.val() || {})
-    })
-    return () => unsubscribe()
-  }, [])
-
-  // Write photo metadata to Firebase only when changed locally
+  // Write photo metadata to Firebase only when changed locally.
+  // Targets subpaths (never the whole photos node) so the retired mood-board
+  // tile data under photos/inspiration* stays intact in the database.
   useEffect(() => {
     if (!photosLoaded) return
     if (isFirebasePhotoUpdate.current) {
       isFirebasePhotoUpdate.current = false
       return
     }
-    set(dbRef(db, 'photos'), { propertyPhotos, inspirationPhotos, visionPhotos, customPropertySlots, customInspirationSlots, propertyOrder, inspirationOrder })
-  }, [propertyPhotos, inspirationPhotos, visionPhotos, customPropertySlots, customInspirationSlots, propertyOrder, inspirationOrder, photosLoaded])
+    set(dbRef(db, 'photos/propertyPhotos'), propertyPhotos).catch(err => console.error('Failed to sync photos:', err))
+    set(dbRef(db, 'photos/customPropertySlots'), customPropertySlots).catch(err => console.error('Failed to sync photos:', err))
+    set(dbRef(db, 'photos/propertyOrder'), propertyOrder).catch(err => console.error('Failed to sync photos:', err))
+  }, [propertyPhotos, customPropertySlots, propertyOrder, photosLoaded])
 
   // Subscribe to shared scratchpad
   useEffect(() => {
@@ -324,7 +312,7 @@ export default function CubLakeCottage() {
       set(dbRef(db, 'scratchpad'), value).then(() => {
         setScratchpadSaved(true)
         setTimeout(() => setScratchpadSaved(false), 2500)
-      })
+      }).catch(err => console.error('Failed to sync scratchpad:', err))
     }, 800)
   }
 
@@ -365,15 +353,13 @@ export default function CubLakeCottage() {
     ))
   }
 
-  const updateInspirationCaption = (id: string, caption: string) => {
-    setInspirationCaptions(prev => {
-      const next = { ...prev, [id]: caption }
-      if (captionWriteTimerRef.current) clearTimeout(captionWriteTimerRef.current)
-      captionWriteTimerRef.current = setTimeout(() => {
-        set(dbRef(db, 'inspirationCaptions'), next)
-      }, 800)
-      return next
-    })
+  const saveTaskEdit = () => {
+    if (!editingTask || !editingTask.title.trim()) return
+    const { id, title, dueDate, month } = editingTask
+    setTasks(prev => prev.map(task =>
+      task.id === id ? { ...task, title: title.trim(), dueDate: dueDate.trim() || 'TBD', month } : task
+    ))
+    setEditingTask(null)
   }
 
   const addTask = () => {
@@ -405,7 +391,7 @@ export default function CubLakeCottage() {
       return
     }
 
-    const target = activeUploadTarget
+    const targetId = activeUploadTarget
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
     const storagePath = `photos/${Date.now()}-${safeName}`
     const fileRef = storageRef(storage, storagePath)
@@ -416,13 +402,7 @@ export default function CubLakeCottage() {
       const url = await getDownloadURL(snapshot.ref)
       const upload: PhotoUpload = { id: Date.now().toString(), url, name: file.name, storagePath }
 
-      if (target.type === 'property' && target.id) {
-        setPropertyPhotos(prev => ({ ...prev, [target.id!]: upload }))
-      } else if (target.type === 'inspiration' && target.id) {
-        setInspirationPhotos(prev => ({ ...prev, [target.id!]: upload }))
-      } else if (target.type === 'vision') {
-        setVisionPhotos(prev => [...prev, upload])
-      }
+      setPropertyPhotos(prev => ({ ...prev, [targetId]: upload }))
     } catch (err) {
       console.error('Photo upload failed:', err)
       setUploadError('Upload failed — please try again')
@@ -434,26 +414,14 @@ export default function CubLakeCottage() {
     e.target.value = ''
   }
 
-  const triggerUpload = (type: 'property' | 'inspiration' | 'vision', id?: string) => {
-    setActiveUploadTarget({ type, id })
-    if (type === 'property') propertyInputRef.current?.click()
-    else if (type === 'inspiration') inspirationInputRef.current?.click()
-    else visionInputRef.current?.click()
+  const triggerUpload = (id: string) => {
+    setActiveUploadTarget(id)
+    propertyInputRef.current?.click()
   }
 
-  const removePhoto = (type: 'property' | 'inspiration' | 'vision', id: string) => {
-    let photo: PhotoUpload | null | undefined
-
-    if (type === 'property') {
-      photo = propertyPhotos[id]
-      setPropertyPhotos(prev => ({ ...prev, [id]: null }))
-    } else if (type === 'inspiration') {
-      photo = inspirationPhotos[id]
-      setInspirationPhotos(prev => ({ ...prev, [id]: null }))
-    } else {
-      photo = visionPhotos.find(p => p.id === id)
-      setVisionPhotos(prev => prev.filter(p => p.id !== id))
-    }
+  const removePhoto = (id: string) => {
+    const photo = propertyPhotos[id]
+    setPropertyPhotos(prev => ({ ...prev, [id]: null }))
 
     if (photo?.storagePath) {
       deleteObject(storageRef(storage, photo.storagePath)).catch(err =>
@@ -462,29 +430,19 @@ export default function CubLakeCottage() {
     }
   }
 
-  const removeCustomSlot = (type: 'property' | 'inspiration', id: string) => {
-    removePhoto(type, id)
-    if (type === 'property') {
-      setCustomPropertySlots(prev => prev.filter(s => s.id !== id))
-      setPropertyOrder(prev => prev.filter(oid => oid !== id))
-    } else {
-      setCustomInspirationSlots(prev => prev.filter(s => s.id !== id))
-      setInspirationOrder(prev => prev.filter(oid => oid !== id))
-    }
+  const removeCustomSlot = (id: string) => {
+    removePhoto(id)
+    setCustomPropertySlots(prev => prev.filter(s => s.id !== id))
+    setPropertyOrder(prev => prev.filter(oid => oid !== id))
   }
 
   const confirmAddSlot = () => {
     if (!newSlotLabel.trim() || !addSlotModal) return
     const id = `custom-${Date.now()}`
-    if (addSlotModal.type === 'property') {
-      setCustomPropertySlots(prev => [...prev, { id, label: newSlotLabel.trim() }])
-      setPropertyOrder(prev => [...prev, id])
-    } else {
-      setCustomInspirationSlots(prev => [...prev, { id, label: newSlotLabel.trim() }])
-      setInspirationOrder(prev => [...prev, id])
-    }
+    setCustomPropertySlots(prev => [...prev, { id, label: newSlotLabel.trim() }])
+    setPropertyOrder(prev => [...prev, id])
     setNewSlotLabel('')
-    setAddSlotModal(null)
+    setAddSlotModal(false)
   }
 
   // Drag-and-drop sensors — require 8px movement before drag activates so clicks still work
@@ -510,42 +468,15 @@ export default function CubLakeCottage() {
     }, 400)
   }
 
-  const handleInspirationDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event
-    if (!over || active.id === over.id) return
-    const knownIds = new Set(inspirationOrder)
-    const allIds = [
-      ...inspirationOrder,
-      ...inspirationBoard.map(c => c.id).filter(id => !knownIds.has(id)),
-      ...customInspirationSlots.map(s => s.id).filter(id => !knownIds.has(id)),
-    ]
-    const from = allIds.indexOf(String(active.id))
-    const to = allIds.indexOf(String(over.id))
-    if (from === -1 || to === -1) return
-    const newOrder = arrayMove(allIds, from, to)
-    setInspirationOrder(newOrder)
-    if (inspirationOrderWriteRef.current) clearTimeout(inspirationOrderWriteRef.current)
-    inspirationOrderWriteRef.current = setTimeout(() => {
-      set(dbRef(db, 'photos/inspirationOrder'), newOrder)
-    }, 400)
-  }
-
   // Ordered tile arrays for rendering
   const allPropertyTiles = [
     ...photoCategories.map(c => ({ ...c, isCustom: false as const })),
     ...customPropertySlots.map(s => ({ id: s.id, label: s.label, icon: ImageIcon, hasImage: false, isCustom: true as const })),
   ]
-  const allInspirationTiles = [
-    ...inspirationBoard.map(c => ({ ...c, isCustom: false as const })),
-    ...customInspirationSlots.map(s => ({ id: s.id, label: s.label, icon: ImageIcon, color: 'lake', isCustom: true as const })),
-  ]
   // Ensure any tile whose ID isn't in the saved order yet still shows up
   const knownPropertyIds = new Set(propertyOrder)
-  const knownInspirationIds = new Set(inspirationOrder)
   const fullPropertyOrder = [...propertyOrder, ...allPropertyTiles.map(t => t.id).filter(id => !knownPropertyIds.has(id))]
-  const fullInspirationOrder = [...inspirationOrder, ...allInspirationTiles.map(t => t.id).filter(id => !knownInspirationIds.has(id))]
   const orderedPropertyTiles = fullPropertyOrder.map(id => allPropertyTiles.find(t => t.id === id)).filter((t): t is NonNullable<typeof t> => t != null)
-  const orderedInspirationTiles = fullInspirationOrder.map(id => allInspirationTiles.find(t => t.id === id)).filter((t): t is NonNullable<typeof t> => t != null)
 
   const groupedTasks = tasks.reduce((acc, task) => {
     if (!acc[task.month]) acc[task.month] = []
@@ -557,9 +488,6 @@ export default function CubLakeCottage() {
     <main className="min-h-screen">
       {/* Hidden file inputs */}
       <input type="file" ref={propertyInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
-      <input type="file" ref={inspirationInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
-      <input type="file" ref={visionInputRef} className="hidden" accept="image/*" onChange={handleFileUpload} />
-      
       {/* Mobile navigation menu */}
       {mobileMenuOpen && (
         <div className="fixed inset-0 z-50 md:hidden">
@@ -589,8 +517,9 @@ export default function CubLakeCottage() {
               {[
                 { label: 'The Property', id: 'property' },
                 { label: 'Progress', id: 'progress' },
+                { label: 'Lake Report', id: 'weather' },
                 { label: 'Notes', id: 'notes' },
-                { label: 'Vision', id: 'vision' },
+                { label: 'Mood Board', id: 'vision' },
               ].map(({ label, id }) => (
                 <button
                   key={id}
@@ -666,8 +595,9 @@ export default function CubLakeCottage() {
             <nav className="hidden md:flex items-center gap-8 text-sm">
               <button onClick={() => scrollToSection('property')} className="opacity-70 hover:opacity-100 transition-all hover:tracking-wide">The Property</button>
               <button onClick={() => scrollToSection('progress')} className="opacity-70 hover:opacity-100 transition-all hover:tracking-wide">Progress</button>
+              <button onClick={() => scrollToSection('weather')} className="opacity-70 hover:opacity-100 transition-all hover:tracking-wide">Lake Report</button>
               <button onClick={() => scrollToSection('notes')} className="opacity-70 hover:opacity-100 transition-all hover:tracking-wide">Notes</button>
-              <button onClick={() => scrollToSection('vision')} className="opacity-70 hover:opacity-100 transition-all hover:tracking-wide">Vision</button>
+              <button onClick={() => scrollToSection('vision')} className="opacity-70 hover:opacity-100 transition-all hover:tracking-wide">Mood Board</button>
             </nav>
           </div>
 
@@ -703,7 +633,7 @@ export default function CubLakeCottage() {
                 <div className="text-xs uppercase tracking-wider opacity-70 mt-1">Days to Go</div>
               </div>
               <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 text-center">
-                <div className="font-serif text-3xl md:text-4xl font-medium">Aug 1</div>
+                <div className="font-serif text-3xl md:text-4xl font-medium">Sep 1</div>
                 <div className="text-xs uppercase tracking-wider opacity-70 mt-1">First Stay</div>
               </div>
             </div>
@@ -793,7 +723,7 @@ export default function CubLakeCottage() {
                     return (
                       <SortablePhotoTile key={cat.id} id={cat.id}>
                         <button
-                          onClick={() => triggerUpload('property', cat.id)}
+                          onClick={() => photo ? setLightboxPhoto({ id: cat.id, label: cat.label, isCustom }) : triggerUpload(cat.id)}
                           className="group relative aspect-square w-full rounded-2xl bg-card border border-border overflow-hidden hover:border-primary/50 transition-all hover:shadow-xl hover:-translate-y-1"
                           onMouseEnter={() => setHoveredCategory(cat.id)}
                           onMouseLeave={() => setHoveredCategory(null)}
@@ -802,10 +732,10 @@ export default function CubLakeCottage() {
                             <>
                               <img src={photo.url} alt={cat.label} className="absolute inset-0 w-full h-full object-cover" />
                               <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                <span className="text-white text-sm font-medium">Change photo</span>
+                                <span className="text-white text-sm font-medium">View photo</span>
                               </div>
                               <button
-                                onClick={(e) => { e.stopPropagation(); isCustom ? removeCustomSlot('property', cat.id) : removePhoto('property', cat.id) }}
+                                onClick={(e) => { e.stopPropagation(); isCustom ? removeCustomSlot(cat.id) : removePhoto(cat.id) }}
                                 onPointerDown={e => e.stopPropagation()}
                                 className="absolute top-2 right-2 p-1.5 rounded-full bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/70"
                               >
@@ -825,7 +755,7 @@ export default function CubLakeCottage() {
                               </div>
                               {isCustom && (
                                 <button
-                                  onClick={(e) => { e.stopPropagation(); removeCustomSlot('property', cat.id) }}
+                                  onClick={(e) => { e.stopPropagation(); removeCustomSlot(cat.id) }}
                                   onPointerDown={e => e.stopPropagation()}
                                   className="absolute top-2 right-2 p-1.5 rounded-full bg-border text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive z-10"
                                 >
@@ -851,7 +781,7 @@ export default function CubLakeCottage() {
                     )
                   })}
                   <button
-                    onClick={() => { setAddSlotModal({ type: 'property' }); setNewSlotLabel('') }}
+                    onClick={() => { setAddSlotModal(true); setNewSlotLabel('') }}
                     className="group aspect-square rounded-2xl border-2 border-dashed border-border hover:border-primary/50 flex flex-col items-center justify-center gap-3 transition-all hover:shadow-lg hover:-translate-y-1 hover:bg-secondary/50"
                   >
                     <div className="p-4 rounded-2xl bg-secondary group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
@@ -864,8 +794,8 @@ export default function CubLakeCottage() {
             </DndContext>
           </div>
 
-          {/* Inspiration board — Mood Board */}
-          <div>
+          {/* Mood Board — vision boards: photos, links, and notes per idea */}
+          <div id="vision">
             <div className="mb-6">
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest flex items-center gap-3">
                 <span className="w-8 h-px bg-border" />
@@ -874,96 +804,10 @@ export default function CubLakeCottage() {
                 <span className="flex-1 h-px bg-border" />
               </h3>
               <p className="text-sm text-muted-foreground text-center mt-2">
-                Click any tile to pin an inspiration photo — add notes below each one
+                Collect ideas in boards — pin photos, links, and notes for each project
               </p>
             </div>
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleInspirationDragEnd}>
-              <SortableContext items={fullInspirationOrder} strategy={rectSortingStrategy}>
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                  {orderedInspirationTiles.map((item) => {
-                    const colorStyles = {
-                      sunset: { bg: 'rgba(212, 165, 116, 0.12)', border: 'rgba(212, 165, 116, 0.3)', text: '#d4a574', hover: 'rgba(212, 165, 116, 0.2)' },
-                      lake: { bg: 'rgba(70, 130, 180, 0.12)', border: 'rgba(70, 130, 180, 0.3)', text: '#4682b4', hover: 'rgba(70, 130, 180, 0.2)' },
-                      pine: { bg: 'rgba(61, 90, 60, 0.12)', border: 'rgba(61, 90, 60, 0.3)', text: '#3d5a3c', hover: 'rgba(61, 90, 60, 0.2)' },
-                    }
-                    const colors = colorStyles[item.color as keyof typeof colorStyles] ?? colorStyles.lake
-                    const photo = inspirationPhotos[item.id]
-                    const isCustom = item.isCustom
-                    return (
-                      <SortablePhotoTile key={item.id} id={item.id}>
-                        <div>
-                          <button
-                            onClick={() => triggerUpload('inspiration', item.id)}
-                            className="group relative aspect-[4/3] w-full rounded-2xl overflow-hidden border-2 transition-all hover:shadow-xl hover:-translate-y-1"
-                            style={{ backgroundColor: photo ? undefined : colors.bg, borderColor: colors.border }}
-                          >
-                            {photo ? (
-                              <>
-                                <img src={photo.url} alt={item.label} className="absolute inset-0 w-full h-full object-cover" />
-                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                  <span className="text-white text-sm font-medium">Change photo</span>
-                                </div>
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); isCustom ? removeCustomSlot('inspiration', item.id) : removePhoto('inspiration', item.id) }}
-                                  onPointerDown={e => e.stopPropagation()}
-                                  className="absolute top-2 right-2 p-1.5 rounded-full bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/70"
-                                >
-                                  <X className="w-4 h-4" />
-                                </button>
-                                <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/60 to-transparent">
-                                  <span className="text-white text-xs font-medium">{item.label}</span>
-                                </div>
-                              </>
-                            ) : (
-                              <>
-                                <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <div className="absolute inset-0 animate-shimmer" style={{ background: `linear-gradient(90deg, transparent 0%, ${colors.hover} 50%, transparent 100%)`, backgroundSize: '200% 100%' }} />
-                                </div>
-                                {isCustom && (
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); removeCustomSlot('inspiration', item.id) }}
-                                    onPointerDown={e => e.stopPropagation()}
-                                    className="absolute top-2 right-2 p-1.5 rounded-full bg-border text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive z-10"
-                                  >
-                                    <X className="w-3 h-3" />
-                                  </button>
-                                )}
-                                <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4">
-                                  <div className="p-3 rounded-2xl transition-all duration-300 group-hover:scale-110 group-hover:shadow-lg" style={{ backgroundColor: colors.bg, color: colors.text }}>
-                                    <item.icon className="w-5 h-5" />
-                                  </div>
-                                  <span className="text-xs font-semibold text-center leading-tight">{item.label}</span>
-                                  <span className="text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">Tap to pin a photo</span>
-                                </div>
-                              </>
-                            )}
-                          </button>
-                          {photo && (
-                            <input
-                              type="text"
-                              value={inspirationCaptions[item.id] || ''}
-                              onChange={e => updateInspirationCaption(item.id, e.target.value)}
-                              onPointerDown={e => e.stopPropagation()}
-                              placeholder="Add a note…"
-                              className="w-full mt-1.5 px-2 py-1 text-xs bg-transparent rounded-lg border border-transparent hover:border-border focus:border-border focus:outline-none focus:ring-1 focus:ring-primary/30 text-foreground placeholder:text-muted-foreground/60 transition-colors"
-                            />
-                          )}
-                        </div>
-                      </SortablePhotoTile>
-                    )
-                  })}
-                  <button
-                    onClick={() => { setAddSlotModal({ type: 'inspiration' }); setNewSlotLabel('') }}
-                    className="group aspect-[4/3] rounded-2xl border-2 border-dashed border-border hover:border-primary/50 flex flex-col items-center justify-center gap-3 transition-all hover:shadow-lg hover:-translate-y-1 hover:bg-secondary/50"
-                  >
-                    <div className="p-4 rounded-2xl bg-secondary group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
-                      <Plus className="w-6 h-6" />
-                    </div>
-                    <span className="text-sm font-medium text-muted-foreground group-hover:text-foreground transition-colors">Add Category</span>
-                  </button>
-                </div>
-              </SortableContext>
-            </DndContext>
+            <VisionBoards />
           </div>
         </div>
       </section>
@@ -1044,6 +888,7 @@ export default function CubLakeCottage() {
                             groupIndex={groupIndex}
                             onToggle={() => toggleTask(task.id)}
                             onDelete={() => deleteTask(task.id)}
+                            onEdit={() => setEditingTask({ id: task.id, title: task.title, dueDate: task.dueDate, month: task.month })}
                             onUpdateNotes={(notes) => updateTaskNotes(task.id, notes)}
                           />
                         ))}
@@ -1056,6 +901,9 @@ export default function CubLakeCottage() {
           </div>
         </div>
       </section>
+
+      {/* Lake Report — live weather at the cottage */}
+      <LakeReport />
 
       {/* Notepad Section */}
       <section id="notes" className="px-6 py-20 md:px-12 lg:px-20">
@@ -1099,109 +947,6 @@ export default function CubLakeCottage() {
               >
                 Save
               </button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Vision Section */}
-      <section id="vision" className="px-6 py-20 md:px-12 lg:px-20 relative overflow-hidden">
-        {/* Decorative background */}
-        <div className="absolute top-0 right-0 w-1/2 h-full opacity-50 pointer-events-none">
-          <div className="absolute top-20 right-20 w-64 h-64 rounded-full blur-3xl" style={{ backgroundColor: 'rgba(70, 130, 180, 0.15)' }} />
-          <div className="absolute bottom-40 right-40 w-48 h-48 rounded-full blur-3xl" style={{ backgroundColor: 'rgba(212, 165, 116, 0.15)' }} />
-        </div>
-        
-        <div className="max-w-6xl mx-auto relative">
-          <div className="grid md:grid-cols-2 gap-16 items-center">
-            <div>
-              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-secondary text-sm font-medium mb-6">
-                <Sparkles className="w-4 h-4" style={{ color: '#d4a574' }} />
-                <span>The Vision</span>
-              </div>
-              <h2 className="font-serif text-4xl md:text-5xl font-medium mb-8 text-balance leading-tight">
-                This is just the <span className="italic">beginning</span>
-              </h2>
-              <p className="text-muted-foreground text-lg leading-relaxed mb-8">
-                Every great adventure starts with a single step. Our cottage on Cub Lake 
-                represents more than just a property — it&apos;s where memories will be made, 
-                where mornings start with lake views, and where life slows down just enough 
-                to really be enjoyed.
-              </p>
-              <div className="flex flex-wrap gap-4">
-                <div className="flex items-center gap-3 text-sm bg-card px-4 py-2 rounded-full border border-border">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#3d5a3c' }} />
-                  <span className="font-medium">Renovations</span>
-                </div>
-                <div className="flex items-center gap-3 text-sm bg-card px-4 py-2 rounded-full border border-border">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#4682b4' }} />
-                  <span className="font-medium">Lake Life</span>
-                </div>
-                <div className="flex items-center gap-3 text-sm bg-card px-4 py-2 rounded-full border border-border">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: '#d4a574' }} />
-                  <span className="font-medium">Short-term Rental</span>
-                </div>
-              </div>
-            </div>
-            <div className="relative">
-              <div className="aspect-[4/3] rounded-3xl bg-secondary border border-border overflow-hidden shadow-2xl">
-                {visionPhotos.length > 0 ? (
-                  <div className="absolute inset-0 flex flex-col">
-                    <div className="flex-1 overflow-y-auto p-3">
-                      <div className="grid grid-cols-2 gap-1.5">
-                        {visionPhotos.map((photo) => (
-                          <div key={photo.id} className="relative group aspect-square rounded-xl overflow-hidden bg-muted">
-                            <img src={photo.url} alt={photo.name} className="w-full h-full object-cover" />
-                            <button
-                              onClick={() => removePhoto('vision', photo.id)}
-                              className="absolute top-1.5 right-1.5 p-1 rounded-full bg-black/50 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/70"
-                            >
-                              <X className="w-3 h-3" />
-                            </button>
-                          </div>
-                        ))}
-                        <button
-                          onClick={() => triggerUpload('vision')}
-                          className="aspect-square rounded-xl border-2 border-dashed border-border hover:border-primary/50 flex flex-col items-center justify-center gap-2 transition-all hover:bg-card/80 group"
-                        >
-                          <div className="p-2 rounded-lg bg-background group-hover:bg-primary group-hover:text-primary-foreground transition-colors">
-                            <Plus className="w-4 h-4" />
-                          </div>
-                          <span className="text-xs text-muted-foreground">Add photo</span>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 p-8">
-                    <div className="p-5 rounded-2xl bg-background shadow-sm">
-                      <ImageIcon className="w-10 h-10 text-muted-foreground" />
-                    </div>
-                    <div className="text-center">
-                      <p className="font-semibold text-lg mb-2">Add your vision board</p>
-                      <p className="text-sm text-muted-foreground">Upload photos that inspire your plans for the cottage</p>
-                    </div>
-                    <button
-                      onClick={() => triggerUpload('vision')}
-                      className="mt-2 px-6 py-3 rounded-xl text-sm font-semibold hover:opacity-90 transition-all hover:shadow-lg"
-                      style={{ backgroundColor: '#3d5a3c', color: 'white' }}
-                    >
-                      Upload Photos
-                    </button>
-                  </div>
-                )}
-              </div>
-              {/* Decorative elements */}
-              <div className="absolute -bottom-6 -right-6 w-32 h-32 rounded-full blur-2xl" style={{ backgroundColor: 'rgba(70, 130, 180, 0.3)' }} />
-              <div className="absolute -top-6 -left-6 w-24 h-24 rounded-full blur-xl" style={{ backgroundColor: 'rgba(212, 165, 116, 0.3)' }} />
-              {/* Corner accent */}
-              <div className="absolute -top-3 -right-3 w-24 h-24">
-                <svg viewBox="0 0 100 100" className="w-full h-full" style={{ color: '#d4a574' }}>
-                  <circle cx="80" cy="20" r="3" fill="currentColor" opacity="0.6" />
-                  <circle cx="90" cy="35" r="2" fill="currentColor" opacity="0.4" />
-                  <circle cx="70" cy="10" r="2" fill="currentColor" opacity="0.3" />
-                </svg>
-              </div>
             </div>
           </div>
         </div>
@@ -1335,11 +1080,81 @@ export default function CubLakeCottage() {
         </div>
       )}
 
-      {/* Add Photo/Inspo Slot Modal */}
+      {/* Edit Task Modal */}
+      {editingTask && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={() => setEditingTask(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="edit-task-title"
+            className="bg-card rounded-2xl p-6 w-full max-w-md shadow-2xl border border-border"
+            onClick={e => e.stopPropagation()}
+            onKeyDown={e => e.key === 'Escape' && setEditingTask(null)}
+          >
+            <h3 id="edit-task-title" className="font-serif text-xl font-medium mb-5">Edit Task</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Task</label>
+                <input
+                  type="text"
+                  value={editingTask.title}
+                  onChange={e => setEditingTask(prev => prev ? { ...prev, title: e.target.value } : prev)}
+                  onKeyDown={e => e.key === 'Enter' && saveTaskEdit()}
+                  autoFocus
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Due Date</label>
+                  <input
+                    type="text"
+                    value={editingTask.dueDate}
+                    onChange={e => setEditingTask(prev => prev ? { ...prev, dueDate: e.target.value } : prev)}
+                    placeholder="e.g. Jul 15"
+                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-muted-foreground mb-1.5 block">Month</label>
+                  <select
+                    value={editingTask.month}
+                    onChange={e => setEditingTask(prev => prev ? { ...prev, month: e.target.value } : prev)}
+                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  >
+                    {MONTHS_ORDER.map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setEditingTask(null)}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-border text-sm font-medium hover:bg-secondary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveTaskEdit}
+                disabled={!editingTask.title.trim()}
+                className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold text-white disabled:opacity-40 transition-all hover:opacity-90"
+                style={{ backgroundColor: '#3d5a3c' }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Photo Slot Modal */}
       {addSlotModal && (
         <div
           className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
-          onClick={() => setAddSlotModal(null)}
+          onClick={() => setAddSlotModal(false)}
         >
           <div
             role="dialog"
@@ -1347,28 +1162,26 @@ export default function CubLakeCottage() {
             aria-labelledby="add-slot-title"
             className="bg-card rounded-2xl p-6 w-full max-w-sm shadow-2xl border border-border"
             onClick={e => e.stopPropagation()}
-            onKeyDown={e => e.key === 'Escape' && setAddSlotModal(null)}
+            onKeyDown={e => e.key === 'Escape' && setAddSlotModal(false)}
           >
             <h3 id="add-slot-title" className="font-serif text-xl font-medium mb-2">
-              {addSlotModal.type === 'property' ? 'Add a photo spot' : 'Add inspiration'}
+              Add a photo spot
             </h3>
             <p className="text-sm text-muted-foreground mb-5">
-              {addSlotModal.type === 'property'
-                ? 'Name the room or area — you can upload a photo after.'
-                : 'Name this inspiration category — you can upload a photo after.'}
+              Name the room or area — you can upload a photo after.
             </p>
             <input
               type="text"
               value={newSlotLabel}
               onChange={e => setNewSlotLabel(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && confirmAddSlot()}
-              placeholder={addSlotModal.type === 'property' ? 'e.g. Back Deck, Garage, Basement…' : 'e.g. Kayak Storage, Landscaping…'}
+              placeholder="e.g. Back Deck, Garage, Basement…"
               autoFocus
               className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 mb-5"
             />
             <div className="flex gap-3">
               <button
-                onClick={() => setAddSlotModal(null)}
+                onClick={() => setAddSlotModal(false)}
                 className="flex-1 px-4 py-2.5 rounded-xl border border-border text-sm font-medium hover:bg-secondary transition-colors"
               >
                 Cancel
@@ -1380,6 +1193,58 @@ export default function CubLakeCottage() {
                 style={{ backgroundColor: '#3d5a3c' }}
               >
                 Add
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Photo Lightbox Modal */}
+      {lightboxPhoto && (
+        <div
+          className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4"
+          onClick={() => setLightboxPhoto(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={lightboxPhoto.label}
+            className="relative max-w-4xl max-h-full w-full flex flex-col items-center"
+            onClick={e => e.stopPropagation()}
+            onKeyDown={e => e.key === 'Escape' && setLightboxPhoto(null)}
+          >
+            <button
+              onClick={() => setLightboxPhoto(null)}
+              className="absolute -top-12 right-0 p-2 rounded-full bg-white/10 text-white hover:bg-white/20 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <img
+              src={propertyPhotos[lightboxPhoto.id]?.url}
+              alt={lightboxPhoto.label}
+              className="max-w-full max-h-[75vh] rounded-xl object-contain shadow-2xl"
+            />
+            <div className="flex items-center gap-3 mt-5">
+              <span className="text-white/80 text-sm font-medium mr-2">{lightboxPhoto.label}</span>
+              <button
+                onClick={() => {
+                  const { id } = lightboxPhoto
+                  setLightboxPhoto(null)
+                  triggerUpload(id)
+                }}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-white bg-white/10 hover:bg-white/20 transition-colors"
+              >
+                <RefreshCw className="w-4 h-4" /> Replace
+              </button>
+              <button
+                onClick={() => {
+                  const { id, isCustom } = lightboxPhoto
+                  isCustom ? removeCustomSlot(id) : removePhoto(id)
+                  setLightboxPhoto(null)
+                }}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium text-white bg-destructive/80 hover:bg-destructive transition-colors"
+              >
+                <Trash2 className="w-4 h-4" /> Delete
               </button>
             </div>
           </div>
@@ -1420,20 +1285,20 @@ function getDefaultMonthOpen(month: string, monthTasks: Task[]): boolean {
 
   if (monthDate > firstOfCurrentMonth) return false  // future month
 
-  const isCurrentMonth = monthDate.getTime() === firstOfCurrentMonth.getTime()
   const allComplete = monthTasks.length > 0 && monthTasks.every(t => t.completed)
 
-  if (allComplete && !isCurrentMonth) return false  // past month fully done
+  if (allComplete) return false  // fully completed months start collapsed
 
   return true
 }
 
-function TaskCard({ task, index, groupIndex, onToggle, onDelete, onUpdateNotes }: {
+function TaskCard({ task, index, groupIndex, onToggle, onDelete, onEdit, onUpdateNotes }: {
   task: Task
   index: number
   groupIndex: number
   onToggle: () => void
   onDelete: () => void
+  onEdit: () => void
   onUpdateNotes: (notes: string) => void
 }) {
   const [showNotes, setShowNotes] = useState(false)
@@ -1492,6 +1357,13 @@ function TaskCard({ task, index, groupIndex, onToggle, onDelete, onUpdateNotes }
         <div className="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
           {!pendingDelete ? (
             <>
+              <button
+                onClick={(e) => { e.stopPropagation(); onEdit() }}
+                className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground transition-colors"
+                title="Edit task"
+              >
+                <Pencil className="w-4 h-4" />
+              </button>
               <button
                 onClick={(e) => { e.stopPropagation(); setShowNotes(s => !s) }}
                 className="p-1.5 rounded-lg hover:bg-secondary text-muted-foreground transition-colors"
